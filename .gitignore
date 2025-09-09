@@ -1,0 +1,18 @@
+# Node modules
+node_modules/
+
+# Environment files
+.env
+lawgenie-key.json
+
+# Uploaded files
+uploads/
+
+# Logs
+logs/
+*.log
+
+# System/Editor files
+.DS_Store
+Thumbs.db
+.vscode/
