@@ -156,6 +156,15 @@ Response:
 * Always update your frontend `config.js` after restarting ngrok (unless you have a reserved domain).
 
 ---
+## 🔮 Future Enhancements
+
+* Voice-controlled commands for document interactions.
+* Real-time translation with speech-to-text integration.
+* AI-powered contract drafting assistance.
+* Multi-user collaboration and annotation.
+* Enhanced dashboard for document management.
+
+---
 
 ## 📜 License
 
