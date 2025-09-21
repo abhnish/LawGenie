@@ -22,12 +22,11 @@ import comprehensiveRouter from "./routes/comprehensive.js";  // ✅ new
 const app = express();
 app.use(cors({
   origin: [
-    "http://localhost:3000", // local React dev server
-    "https://lawgenie-frontend.web.app", // your Firebase Hosting URL
-    "https://pollenlike-tenorless-clemmie.ngrok-free.app" // your reserved ngrok domain
+    "http://localhost:3000",
+    "https://lawgenie-frontend.web.app"
   ],
-  methods: ["GET", "POST", "PUT", "DELETE"],
-  allowedHeaders: ["Content-Type", "Authorization"]
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "OPTIONS"]
 }));
 
 app.use(express.json());
