@@ -1,66 +1,48 @@
 import path from "path";
 import fs from "fs";
 import { v4 as uuidv4 } from "uuid";
+import { Storage } from "@google-cloud/storage";
 
-// Variable to track if we're using cloud storage or local storage
+// ================== CONFIG ==================
 let usingLocalStorage = true;
 let storage, bucket, bucketName;
 
-// Create local storage directory if it doesn't exist
-const localStorageDir = path.join(process.cwd(), 'permanent_storage');
+// Local permanent storage path
+const localStorageDir = path.join(process.cwd(), "permanent_storage");
 if (!fs.existsSync(localStorageDir)) {
   fs.mkdirSync(localStorageDir, { recursive: true });
-  console.log('📁 Created local storage directory:', localStorageDir);
+  console.log("📁 Created local storage directory:", localStorageDir);
 }
 
-// Try to initialize Google Cloud Storage if credentials are available
+// Try Google Cloud Storage
 try {
   if (process.env.BUCKET_NAME) {
-    const { Storage } = require('@google-cloud/storage');
     storage = new Storage();
     bucketName = process.env.BUCKET_NAME;
     bucket = storage.bucket(bucketName);
-    
-    // Test if we can use the bucket
     usingLocalStorage = false;
-    console.log('✅ Using Google Cloud Storage for file storage');
+    console.log("✅ Using Google Cloud Storage for file storage");
   } else {
-    console.log('⚠️ BUCKET_NAME environment variable not set, using local storage');
-    usingLocalStorage = true;
+    console.log("⚠️ BUCKET_NAME not set, using local storage");
   }
 } catch (error) {
-  console.log('⚠️ Google Cloud Storage initialization failed, using local storage instead:', error.message);
+  console.log("⚠️ Failed to init Google Cloud Storage:", error.message);
   usingLocalStorage = true;
 }
 
-/**
- * Upload a file to storage (cloud or local)
- * @param {string} filePath - Local path to the file
- * @param {string} originalFilename - Original name of the file
- * @returns {Promise<object>} - Uploaded file information
- */
+// ================== CORE UPLOAD ==================
 export async function uploadFile(filePath, originalFilename) {
-  if (usingLocalStorage) {
-    return uploadFileLocal(filePath, originalFilename);
-  } else {
-    return uploadFileCloud(filePath, originalFilename);
-  }
+  return usingLocalStorage
+    ? uploadFileLocal(filePath, originalFilename)
+    : uploadFileCloud(filePath, originalFilename);
 }
 
-/**
- * Upload a file to Google Cloud Storage
- * @param {string} filePath - Local path to the file
- * @param {string} originalFilename - Original name of the file
- * @returns {Promise<object>} - Uploaded file information
- */
 async function uploadFileCloud(filePath, originalFilename) {
   try {
-    // Generate a unique filename with original name to avoid collisions
     const fileExtension = path.extname(originalFilename);
     const uniqueFilename = `${uuidv4()}${fileExtension}`;
     const fileType = getFileType(fileExtension);
 
-    // Upload the file to Google Cloud Storage
     await bucket.upload(filePath, {
       destination: uniqueFilename,
       metadata: {
@@ -72,407 +54,236 @@ async function uploadFileCloud(filePath, originalFilename) {
       },
     });
 
-    // Make the file publicly accessible
-    await bucket.file(uniqueFilename).makePublic();
+    // Generate signed URL (1 hour validity)
+    const [signedUrl] = await bucket.file(uniqueFilename).getSignedUrl({
+      action: "read",
+      expires: Date.now() + 1000 * 60 * 60,
+    });
 
-    // Get the public URL
-    const publicUrl = `https://storage.googleapis.com/${bucketName}/${uniqueFilename}`;
-
-    // Return file information
     return {
       id: uniqueFilename,
       name: originalFilename,
-      url: publicUrl,
+      url: signedUrl,
       contentType: fileType,
       uploadedAt: new Date().toISOString(),
     };
   } catch (error) {
-    console.error("Error uploading file to Google Cloud Storage:", error);
+    console.error("❌ Error uploading to GCS:", error.code, error.message);
     throw error;
   }
 }
 
-/**
- * Upload a file to local storage
- * @param {string} filePath - Local path to the file
- * @param {string} originalFilename - Original name of the file
- * @returns {Promise<object>} - Uploaded file information
- */
 async function uploadFileLocal(filePath, originalFilename) {
   try {
-    // Generate a unique filename with original name to avoid collisions
     const fileExtension = path.extname(originalFilename);
     const uniqueFilename = `${uuidv4()}${fileExtension}`;
     const fileType = getFileType(fileExtension);
-    
-    // Define the permanent storage path
-    const permanentStoragePath = path.join(localStorageDir, uniqueFilename);
-    
-    // Copy the file to permanent storage
-    fs.copyFileSync(filePath, permanentStoragePath);
-    
-    // Create metadata file
+    const permanentPath = path.join(localStorageDir, uniqueFilename);
+
+    fs.copyFileSync(filePath, permanentPath);
+
     const metadata = {
       id: uniqueFilename,
       name: originalFilename,
       contentType: fileType,
       uploadedAt: new Date().toISOString(),
-      size: fs.statSync(permanentStoragePath).size
+      size: fs.statSync(permanentPath).size,
     };
-    
-    // Save metadata
-    const metadataPath = path.join(localStorageDir, `${uniqueFilename}.meta.json`);
-    fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
-    
-    // Return file information
-    return {
-      ...metadata,
-      url: `/api/storage/local/${uniqueFilename}` // Local URL
-    };
-  } catch (error) {
-    console.error("Error uploading file to local storage:", error);
-    throw error;
-  }
-}
 
-/**
- * Download a file from storage
- * @param {string} fileId - ID of the file in storage
- * @param {string} destinationPath - Path to save the downloaded file
- * @returns {Promise<string>} - Path to the downloaded file
- */
-export async function downloadFile(fileId, destinationPath = null) {
-  if (usingLocalStorage) {
-    return downloadFileLocal(fileId, destinationPath);
-  } else {
-    return downloadFileCloud(fileId, destinationPath);
-  }
-}
-
-/**
- * Download a file from Google Cloud Storage
- * @param {string} fileId - ID of the file in storage
- * @param {string} destinationPath - Path to save the downloaded file
- * @returns {Promise<string>} - Path to the downloaded file
- */
-async function downloadFileCloud(fileId, destinationPath = null) {
-  try {
-    // Set the destination path if not provided
-    const downloadPath =
-      destinationPath ||
-      path.join(process.cwd(), "downloads", fileId);
-
-    // Create the downloads directory if it doesn't exist
-    const downloadsDir = path.dirname(downloadPath);
-    if (!fs.existsSync(downloadsDir)) {
-      fs.mkdirSync(downloadsDir, { recursive: true });
-    }
-
-    // Download the file
-    await bucket.file(fileId).download({
-      destination: downloadPath,
-    });
-
-    return downloadPath;
-  } catch (error) {
-    console.error("Error downloading file from Google Cloud Storage:", error);
-    throw error;
-  }
-}
-
-/**
- * Download a file from local storage
- * @param {string} fileId - ID of the file in storage
- * @param {string} destinationPath - Path to save the downloaded file
- * @returns {Promise<string>} - Path to the downloaded file
- */
-async function downloadFileLocal(fileId, destinationPath = null) {
-  try {
-    // Source path in permanent storage
-    const sourcePath = path.join(localStorageDir, fileId);
-    
-    // Check if file exists
-    if (!fs.existsSync(sourcePath)) {
-      throw new Error(`File ${fileId} not found in local storage`);
-    }
-    
-    // Set the destination path if not provided
-    const downloadPath = destinationPath || path.join(process.cwd(), 'downloads', fileId);
-    
-    // Create the downloads directory if it doesn't exist
-    const downloadsDir = path.dirname(downloadPath);
-    if (!fs.existsSync(downloadsDir)) {
-      fs.mkdirSync(downloadsDir, { recursive: true });
-    }
-    
-    // Copy the file to the download location
-    fs.copyFileSync(sourcePath, downloadPath);
-    
-    return downloadPath;
-  } catch (error) {
-    console.error("Error downloading file from local storage:", error);
-    throw error;
-  }
-}
-
-/**
- * Delete a file from storage
- * @param {string} fileId - ID of the file in storage
- * @returns {Promise<boolean>} - True if deletion was successful
- */
-export async function deleteFile(fileId) {
-  if (usingLocalStorage) {
-    return deleteFileLocal(fileId);
-  } else {
-    return deleteFileCloud(fileId);
-  }
-}
-
-/**
- * Delete a file from Google Cloud Storage
- * @param {string} fileId - ID of the file in storage
- * @returns {Promise<boolean>} - True if deletion was successful
- */
-async function deleteFileCloud(fileId) {
-  try {
-    await bucket.file(fileId).delete();
-    return true;
-  } catch (error) {
-    console.error("Error deleting file from Google Cloud Storage:", error);
-    throw error;
-  }
-}
-
-/**
- * Delete a file from local storage
- * @param {string} fileId - ID of the file in storage
- * @returns {Promise<boolean>} - True if deletion was successful
- */
-async function deleteFileLocal(fileId) {
-  try {
-    // Delete the file
-    const filePath = path.join(localStorageDir, fileId);
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-    }
-    
-    // Delete metadata if it exists
-    const metadataPath = path.join(localStorageDir, `${fileId}.meta.json`);
-    if (fs.existsSync(metadataPath)) {
-      fs.unlinkSync(metadataPath);
-    }
-    
-    return true;
-  } catch (error) {
-    console.error("Error deleting file from local storage:", error);
-    throw error;
-  }
-}
-
-/**
- * List all files in storage
- * @returns {Promise<Array>} - Array of file information
- */
-export async function listFiles() {
-  if (usingLocalStorage) {
-    return listFilesLocal();
-  } else {
-    return listFilesCloud();
-  }
-}
-
-/**
- * List all files in Google Cloud Storage
- * @returns {Promise<Array>} - Array of file information
- */
-async function listFilesCloud() {
-  try {
-    const [files] = await bucket.getFiles();
-
-    const fileList = await Promise.all(
-      files.map(async (file) => {
-        const [metadata] = await file.getMetadata();
-        const publicUrl = `https://storage.googleapis.com/${bucketName}/${file.name}`;
-
-        return {
-          id: file.name,
-          name: metadata.metadata?.originalFilename || file.name,
-          url: publicUrl,
-          contentType: metadata.contentType,
-          uploadedAt: metadata.metadata?.uploadedAt || metadata.timeCreated,
-        };
-      })
+    fs.writeFileSync(
+      path.join(localStorageDir, `${uniqueFilename}.meta.json`),
+      JSON.stringify(metadata, null, 2)
     );
 
-    return fileList;
-  } catch (error) {
-    console.error("Error listing files from Google Cloud Storage:", error);
-    throw error;
-  }
-}
-
-/**
- * List all files in local storage
- * @returns {Promise<Array>} - Array of file information
- */
-async function listFilesLocal() {
-  try {
-    const files = fs.readdirSync(localStorageDir);
-    
-    // Filter out metadata files and get only actual files
-    const fileList = files
-      .filter(file => !file.endsWith('.meta.json'))
-      .map(fileId => {
-        try {
-          // Try to read metadata
-          const metadataPath = path.join(localStorageDir, `${fileId}.meta.json`);
-          if (fs.existsSync(metadataPath)) {
-            const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
-            return {
-              ...metadata,
-              url: `/api/storage/local/${fileId}`
-            };
-          }
-          
-          // If no metadata, generate basic info
-          return {
-            id: fileId,
-            name: fileId,
-            url: `/api/storage/local/${fileId}`,
-            contentType: getFileType(path.extname(fileId)),
-            uploadedAt: fs.statSync(path.join(localStorageDir, fileId)).mtime.toISOString()
-          };
-        } catch (err) {
-          console.error(`Error reading metadata for ${fileId}:`, err);
-          return null;
-        }
-      })
-      .filter(Boolean); // Remove any null entries
-      
-    return fileList;
-  } catch (error) {
-    console.error("Error listing files from local storage:", error);
-    throw error;
-  }
-}
-
-/**
- * Get information about a file
- * @param {string} fileId - ID of the file in storage
- * @returns {Promise<object>} - File information
- */
-export async function getFileInfo(fileId) {
-  if (usingLocalStorage) {
-    return getFileInfoLocal(fileId);
-  } else {
-    return getFileInfoCloud(fileId);
-  }
-}
-
-/**
- * Get information about a file in Google Cloud Storage
- * @param {string} fileId - ID of the file in storage
- * @returns {Promise<object>} - File information
- */
-async function getFileInfoCloud(fileId) {
-  try {
-    const [metadata] = await bucket.file(fileId).getMetadata();
-    const publicUrl = `https://storage.googleapis.com/${bucketName}/${fileId}`;
-
     return {
-      id: fileId,
-      name: metadata.metadata?.originalFilename || fileId,
-      url: publicUrl,
-      contentType: metadata.contentType,
-      uploadedAt: metadata.metadata?.uploadedAt || metadata.timeCreated,
-      size: metadata.size,
+      ...metadata,
+      url: `/api/storage/local/${uniqueFilename}`,
     };
   } catch (error) {
-    console.error("Error getting file info from Google Cloud Storage:", error);
+    console.error("❌ Error uploading to local storage:", error.message);
     throw error;
   }
 }
 
-/**
- * Get information about a file in local storage
- * @param {string} fileId - ID of the file in storage
- * @returns {Promise<object>} - File information
- */
-async function getFileInfoLocal(fileId) {
+// ================== DOWNLOAD ==================
+export async function downloadFile(fileId, destinationPath = null) {
+  return usingLocalStorage
+    ? downloadFileLocal(fileId, destinationPath)
+    : downloadFileCloud(fileId, destinationPath);
+}
+
+async function downloadFileCloud(fileId, destinationPath = null) {
   try {
-    const filePath = path.join(localStorageDir, fileId);
-    const metadataPath = path.join(localStorageDir, `${fileId}.meta.json`);
-    
-    // Check if file exists
-    if (!fs.existsSync(filePath)) {
-      throw new Error(`File ${fileId} not found in local storage`);
+    const downloadPath =
+      destinationPath || path.join(process.cwd(), "downloads", fileId);
+
+    if (!fs.existsSync(path.dirname(downloadPath))) {
+      fs.mkdirSync(path.dirname(downloadPath), { recursive: true });
     }
-    
-    // Try to read metadata
-    if (fs.existsSync(metadataPath)) {
-      const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+
+    await bucket.file(fileId).download({ destination: downloadPath });
+    return downloadPath;
+  } catch (error) {
+    console.error("❌ Error downloading from GCS:", error.message);
+    throw error;
+  }
+}
+
+async function downloadFileLocal(fileId, destinationPath = null) {
+  const sourcePath = path.join(localStorageDir, fileId);
+  if (!fs.existsSync(sourcePath)) {
+    throw new Error(`File ${fileId} not found in local storage`);
+  }
+
+  const downloadPath =
+    destinationPath || path.join(process.cwd(), "downloads", fileId);
+
+  if (!fs.existsSync(path.dirname(downloadPath))) {
+    fs.mkdirSync(path.dirname(downloadPath), { recursive: true });
+  }
+
+  fs.copyFileSync(sourcePath, downloadPath);
+  return downloadPath;
+}
+
+// ================== DELETE ==================
+export async function deleteFile(fileId) {
+  return usingLocalStorage
+    ? deleteFileLocal(fileId)
+    : deleteFileCloud(fileId);
+}
+
+async function deleteFileCloud(fileId) {
+  await bucket.file(fileId).delete().catch((err) => {
+    console.error("❌ Error deleting from GCS:", err.message);
+    throw err;
+  });
+  return true;
+}
+
+async function deleteFileLocal(fileId) {
+  const filePath = path.join(localStorageDir, fileId);
+  const metadataPath = `${filePath}.meta.json`;
+  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  if (fs.existsSync(metadataPath)) fs.unlinkSync(metadataPath);
+  return true;
+}
+
+// ================== LIST ==================
+export async function listFiles() {
+  return usingLocalStorage ? listFilesLocal() : listFilesCloud();
+}
+
+async function listFilesCloud() {
+  const [files] = await bucket.getFiles();
+  return Promise.all(
+    files.map(async (file) => {
+      const [metadata] = await file.getMetadata();
+      const [signedUrl] = await file.getSignedUrl({
+        action: "read",
+        expires: Date.now() + 1000 * 60 * 60,
+      });
+
       return {
-        ...metadata,
-        url: `/api/storage/local/${fileId}`
+        id: file.name,
+        name: metadata.metadata?.originalFilename || file.name,
+        url: signedUrl,
+        contentType: metadata.contentType,
+        uploadedAt: metadata.metadata?.uploadedAt || metadata.timeCreated,
       };
-    }
-    
-    // If no metadata, generate basic info
-    return {
-      id: fileId,
-      name: fileId,
-      url: `/api/storage/local/${fileId}`,
-      contentType: getFileType(path.extname(fileId)),
-      uploadedAt: fs.statSync(filePath).mtime.toISOString(),
-      size: fs.statSync(filePath).size
-    };
-  } catch (error) {
-    console.error("Error getting file info from local storage:", error);
-    throw error;
-  }
+    })
+  );
 }
 
-/**
- * Move a file from temporary uploads to permanent storage
- * @param {string} fileId - ID of the file in temporary storage
- * @param {string} originalFilename - Original name of the file
- * @returns {Promise<object>} - Information about the stored file
- */
+async function listFilesLocal() {
+  const files = fs.readdirSync(localStorageDir);
+  return files
+    .filter((f) => !f.endsWith(".meta.json"))
+    .map((fileId) => {
+      const metadataPath = path.join(localStorageDir, `${fileId}.meta.json`);
+      if (fs.existsSync(metadataPath)) {
+        const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf8"));
+        return { ...metadata, url: `/api/storage/local/${fileId}` };
+      }
+      return {
+        id: fileId,
+        name: fileId,
+        url: `/api/storage/local/${fileId}`,
+        contentType: getFileType(path.extname(fileId)),
+        uploadedAt: fs.statSync(path.join(localStorageDir, fileId)).mtime.toISOString(),
+      };
+    });
+}
+
+// ================== FILE INFO ==================
+export async function getFileInfo(fileId) {
+  return usingLocalStorage ? getFileInfoLocal(fileId) : getFileInfoCloud(fileId);
+}
+
+async function getFileInfoCloud(fileId) {
+  const [metadata] = await bucket.file(fileId).getMetadata();
+  const [signedUrl] = await bucket.file(fileId).getSignedUrl({
+    action: "read",
+    expires: Date.now() + 1000 * 60 * 60,
+  });
+
+  return {
+    id: fileId,
+    name: metadata.metadata?.originalFilename || fileId,
+    url: signedUrl,
+    contentType: metadata.contentType,
+    uploadedAt: metadata.metadata?.uploadedAt || metadata.timeCreated,
+    size: metadata.size,
+  };
+}
+
+async function getFileInfoLocal(fileId) {
+  const filePath = path.join(localStorageDir, fileId);
+  if (!fs.existsSync(filePath)) throw new Error(`File ${fileId} not found`);
+
+  const metadataPath = `${filePath}.meta.json`;
+  if (fs.existsSync(metadataPath)) {
+    const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf8"));
+    return { ...metadata, url: `/api/storage/local/${fileId}` };
+  }
+
+  return {
+    id: fileId,
+    name: fileId,
+    url: `/api/storage/local/${fileId}`,
+    contentType: getFileType(path.extname(fileId)),
+    uploadedAt: fs.statSync(filePath).mtime.toISOString(),
+    size: fs.statSync(filePath).size,
+  };
+}
+
+// ================== STORE UPLOADED FILE ==================
 export async function storeUploadedFile(fileId, originalFilename) {
+  const tempFilePath = path.join(process.cwd(), "uploads", fileId);
+  if (!fs.existsSync(tempFilePath)) throw new Error("Temp file not found");
+
+  const fileInfo = await uploadFile(tempFilePath, originalFilename);
+
+  // cleanup temp upload
   try {
-    const tempFilePath = path.join(process.cwd(), "uploads", fileId);
-
-    // Check if the file exists in temporary storage
-    if (!fs.existsSync(tempFilePath)) {
-      throw new Error("File not found in temporary storage");
-    }
-
-    // Upload to storage (cloud or local)
-    const fileInfo = await uploadFile(tempFilePath, originalFilename);
-
-    // Optionally delete the temporary file after successful upload
-    // fs.unlinkSync(tempFilePath);
-
-    return fileInfo;
-  } catch (error) {
-    console.error("Error storing uploaded file:", error);
-    throw error;
+    fs.unlinkSync(tempFilePath);
+  } catch (err) {
+    console.warn("⚠️ Failed to cleanup temp file:", err.message);
   }
+
+  return fileInfo;
 }
 
-/**
- * Get the MIME type for a file extension
- * @param {string} extension - File extension
- * @returns {string} - MIME type
- */
+// ================== MIME TYPES ==================
 function getFileType(extension) {
   const types = {
     ".pdf": "application/pdf",
-    ".docx":
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ".doc": "application/msword",
     ".txt": "text/plain",
+    ".csv": "text/csv",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
   };
-
   return types[extension.toLowerCase()] || "application/octet-stream";
 }

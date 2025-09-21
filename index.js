@@ -12,13 +12,12 @@ import docsRouter from "./routes/docs.js";
 import translateRouter from "./routes/translate.js";
 import storageRouter from "./routes/storage.js";
 import summarizeRouter from "./routes/summarize.js";
-
 import askRouter from "./routes/ask.js";
 import keytermsRouter from "./routes/keyterms.js";
 import issuesRouter from "./routes/issues.js";
 import compareRouter from "./routes/compare.js";
-
-
+import clausesRouter from "./routes/clauses.js";          // ✅ new
+import comprehensiveRouter from "./routes/comprehensive.js";  // ✅ new
 
 const app = express();
 app.use(cors());
@@ -31,13 +30,21 @@ app.use("/api", docsRouter);
 app.use("/api/translate", translateRouter);
 app.use("/api/storage", storageRouter);
 app.use("/api", summarizeRouter);
-
 app.use("/api", askRouter);
 app.use("/api", keytermsRouter);
 app.use("/api", issuesRouter);
 app.use("/api", compareRouter);
+app.use("/api", clausesRouter);         // ✅ new
+app.use("/api", comprehensiveRouter);   // ✅ new
+
+// Health check
+app.get("/", (req, res) => {
+  res.send("✅ Backend is running on localhost:5000");
+});
 
 const PORT = process.env.PORT || 5000;
+
+
 app.listen(PORT, () => {
   console.log(`🚀 LawGenie backend running at http://localhost:${PORT}`);
   console.log("Bucket:", process.env.BUCKET_NAME);

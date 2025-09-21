@@ -1,15 +1,13 @@
+// routes/comprehensive.js
 import express from "express";
 import path from "path";
 import { extractTextFromFile } from "../utils/fileProcessing.js";
-import { extractKeyTerms } from "../services/geminiService.js";
+import { performComprehensiveAnalysis } from "../services/geminiService.js";
 import { successResponse, errorResponse } from "../utils/responseHelper.js";
 
 const router = express.Router();
 
-// -------------------------------
-// Extract key legal terms
-// -------------------------------
-router.post("/keyterms", async (req, res) => {
+router.post("/comprehensive", async (req, res) => {
   try {
     const { file_id } = req.body;
 
@@ -19,7 +17,7 @@ router.post("/keyterms", async (req, res) => {
 
     const filePath = path.join(process.cwd(), "uploads", file_id);
 
-    // Detect mimetype
+    // Detect MIME type
     let mimetype = "application/pdf";
     if (file_id.endsWith(".docx")) {
       mimetype =
@@ -28,21 +26,20 @@ router.post("/keyterms", async (req, res) => {
 
     // Extract text
     const text = await extractTextFromFile(filePath, mimetype);
-
     if (!text || text.trim().length === 0) {
-      return errorResponse(res, "No text extracted from file", 400);
+      return errorResponse(res, "No text found in document", 400);
     }
 
-    // Run Gemini service
-    const terms = await extractKeyTerms(text);
+    // Perform comprehensive legal analysis with Gemini
+    const analysis = await performComprehensiveAnalysis(text);
 
-    return successResponse(res, "Key terms extracted successfully ✅", {
+    return successResponse(res, "Comprehensive analysis completed successfully ✅", {
       file_id,
-      key_terms: terms,
+      analysis,
     });
   } catch (error) {
-    console.error("❌ Error extracting key terms:", error);
-    return errorResponse(res, "Failed to extract key terms", 500, error.message);
+    console.error("❌ Error performing comprehensive analysis:", error);
+    return errorResponse(res, "Failed to perform comprehensive analysis", 500, error.message);
   }
 });
 

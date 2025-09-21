@@ -1,65 +1,117 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import dotenv from "dotenv";
+import { safeJsonCall } from "../utils/safeJsonCall.js";  // ✅ Reuse the helper
+
+dotenv.config();
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
 /**
- * Translate text to the specified language using Gemini AI
+ * Helper: Split text into safe chunks for Gemini
+ */
+function chunkText(text, size = 2000) {
+  const chunks = [];
+  let i = 0;
+  while (i < text.length) {
+    chunks.push(text.slice(i, i + size));
+    i += size;
+  }
+  return chunks;
+}
+
+/**
+ * Translate text (chunked + safeJsonCall)
  */
 export async function translateText(text, targetLanguage) {
   try {
-    if (!text || text.trim() === "") {
-      return "No text extracted from document.";
+    if (!text || text.trim().length === 0) return "";
+
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+    const chunks = chunkText(text);
+
+    console.log(`📌 Splitting text into ${chunks.length} chunk(s)`);
+
+    let translatedChunks = [];
+
+    for (let idx = 0; idx < chunks.length; idx++) {
+      const chunk = chunks[idx];
+      console.log(`⚡ Translating chunk ${idx + 1}/${chunks.length} (${chunk.length} chars)`);
+
+      const prompt = `
+        You are a legal translation assistant. 
+        Translate the following text into ${targetLanguage}. 
+        Preserve legal terminology and meaning.
+        Respond ONLY with the translated text, no explanations.
+
+        TEXT:
+        """${chunk}"""
+      `;
+
+      const translated = await safeJsonCall(model, prompt);
+
+      translatedChunks.push(translated);
     }
 
-    const prompt = `Translate the following text into ${targetLanguage}. 
-Maintain legal terminology accuracy and preserve the original meaning:\n\n${text}`;
-
-    const result = await model.generateContent(prompt);
-    return result.response.text();
+    const finalResult = translatedChunks.join("\n");
+    console.log("✅ Translation completed successfully");
+    return finalResult;
   } catch (err) {
-    console.error(`Translation Error [${targetLanguage}]:`, err.message || err);
+    console.error("❌ Translation Error:", err);
     return "Error translating text.";
   }
 }
 
 /**
- * Translate analysis results (objects/arrays/strings)
+ * Translate analysis results (recursive, JSON-safe)
  */
 export async function translateAnalysisResult(analysisResult, targetLanguage) {
   try {
     let resultObj;
     try {
-      resultObj = typeof analysisResult === "string"
-        ? JSON.parse(analysisResult)
-        : analysisResult;
-    } catch {
+      resultObj =
+        typeof analysisResult === "string"
+          ? JSON.parse(analysisResult)
+          : analysisResult;
+    } catch (e) {
+      // Not JSON, just translate raw text
       return translateText(analysisResult, targetLanguage);
     }
 
     if (Array.isArray(resultObj)) {
-      return Promise.all(resultObj.map(item =>
-        typeof item === "string"
-          ? translateText(item, targetLanguage)
-          : translateAnalysisResult(item, targetLanguage)
-      ));
+      const translatedArray = [];
+      for (const item of resultObj) {
+        if (typeof item === "object") {
+          const translatedItem = {};
+          for (const [key, value] of Object.entries(item)) {
+            translatedItem[key] =
+              typeof value === "string"
+                ? await translateText(value, targetLanguage)
+                : await translateAnalysisResult(value, targetLanguage);
+          }
+          translatedArray.push(translatedItem);
+        } else if (typeof item === "string") {
+          translatedArray.push(await translateText(item, targetLanguage));
+        } else {
+          translatedArray.push(item);
+        }
+      }
+      return translatedArray;
     }
 
     if (typeof resultObj === "object") {
       const translatedObj = {};
       for (const [key, value] of Object.entries(resultObj)) {
-        if (typeof value === "string") {
-          translatedObj[key] = await translateText(value, targetLanguage);
-        } else {
-          translatedObj[key] = await translateAnalysisResult(value, targetLanguage);
-        }
+        translatedObj[key] =
+          typeof value === "string"
+            ? await translateText(value, targetLanguage)
+            : await translateAnalysisResult(value, targetLanguage);
       }
       return translatedObj;
     }
 
     return translateText(analysisResult, targetLanguage);
   } catch (err) {
-    console.error(`Translation Error [${targetLanguage}]:`, err.message || err);
+    console.error("❌ Error in translateAnalysisResult:", err);
     return "Error translating analysis result.";
   }
 }

@@ -1,20 +1,18 @@
-import { summarizeText, askQuestion, extractKeyTerms } from "./services/geminiService.js";
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import dotenv from "dotenv";
+dotenv.config();
 
-const sampleText = `
-This Agreement is made between Alpha Corp and Beta Ltd. 
-Alpha agrees to deliver 1000 units by October 1, 2025. 
-Beta will pay $200,000 within 30 days of delivery.
-`;
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-async function runTests() {
-  console.log("🔹 Testing Summarize...");
-  console.log(await summarizeText(sampleText));
-
-  console.log("\n🔹 Testing Ask Question...");
-  console.log(await askQuestion(sampleText, "Who are the parties?"));
-
-  console.log("\n🔹 Testing Key Terms...");
-  console.log(await extractKeyTerms(sampleText));
+async function testTranslate() {
+  try {
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+    const prompt = "Translate 'Hello World' to Hindi";
+    const result = await model.generateContent(prompt);
+    console.log("Output:", result.response.text());
+  } catch (err) {
+    console.error("Test Error:", err);
+  }
 }
 
-runTests().catch(console.error);
+testTranslate();

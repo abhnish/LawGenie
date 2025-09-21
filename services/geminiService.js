@@ -1,4 +1,6 @@
+// services/geminiService.js
 import { GoogleAuth } from "google-auth-library";
+import { safeJsonCall } from "../utils/safeJsonCall.js";  // ✅ moved out
 
 const MODEL = "gemini-2.5-flash";
 const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
@@ -16,7 +18,7 @@ async function getAccessToken() {
 }
 
 // 🔹 Retry wrapper
-async function withRetry(fn, retries = 3, delay = 1000) {
+export async function withRetry(fn, retries = 3, delay = 1000) {
   for (let i = 0; i < retries; i++) {
     try {
       return await fn();
@@ -38,7 +40,7 @@ function splitIntoChunks(text, size = 8000) {
 }
 
 // 🔹 Core Gemini request
-async function callGemini(prompt) {
+export async function callGemini(prompt) {
   const token = await getAccessToken();
 
   const res = await fetch(API_URL, {
@@ -64,7 +66,11 @@ async function callGemini(prompt) {
   );
 }
 
-// 🔹 High-level wrappers
+//
+// ===================== High-level Wrappers =====================
+//
+
+// 🔹 Summarization (plain text)
 export async function summarizeText(text) {
   if (text.length > 8000) {
     console.log("⚠️ Text too long, chunking...");
@@ -90,53 +96,100 @@ export async function summarizeText(text) {
   );
 }
 
+// 🔹 Q&A (plain text)
 export async function askQuestion(text, question) {
   return await withRetry(() =>
-    callGemini(`Answer the question based on the following legal text:\n\n${text}\n\nQuestion: ${question}`)
-  );
-}
-
-export async function extractKeyTerms(text) {
-  return await withRetry(() =>
     callGemini(
-      `Extract and define the key legal terms from the following text. Format as JSON array with 'term' and 'definition':\n\n${text}`
+      `Answer the following question based strictly on the legal text below. 
+Return ONLY plain text (no JSON needed).
+
+Text:
+${text}
+
+Question: ${question}`
     )
   );
 }
 
+// 🔹 Extract key terms (JSON)
+export async function extractKeyTerms(text) {
+  return await safeJsonCall(
+    `Extract and define the key legal terms from the following text.
+Return ONLY valid JSON in this format:
+
+[
+  { "term": "Party A", "definition": "The buyer company" },
+  { "term": "Indemnity", "definition": "Obligation to compensate for damages" }
+]
+
+Text:
+${text}`
+  );
+}
+
+// 🔹 Identify legal issues (JSON)
 export async function identifyLegalIssues(text) {
-  return await withRetry(() =>
-    callGemini(`Identify potential legal issues in the document. Structure with headings:\n\n${text}`)
+  return await safeJsonCall(
+    `Identify potential legal issues in the document.
+Return ONLY valid JSON in this format:
+
+[
+  { "issue": "Ambiguous termination clause", "explanation": "Termination conditions are vague" },
+  { "issue": "Missing dispute resolution clause", "explanation": "No mechanism for arbitration or litigation" }
+]
+
+Text:
+${text}`
   );
 }
 
+// 🔹 Analyze contract clauses (JSON)
 export async function analyzeContractClauses(text) {
-  return await withRetry(() =>
-    callGemini(`Analyze the contract clauses in this document. For each clause:
-1. Clause type
-2. Purpose
-3. Risks / unusual terms
-4. Suggested improvements\n\n${text}`)
+  return await safeJsonCall(
+    `Analyze the contract clauses in this document.
+For each clause, return ONLY valid JSON in this format:
+
+[
+  {
+    "clause": "Termination",
+    "purpose": "Specifies conditions under which the contract may end",
+    "risk": "Ambiguous language may favor one party",
+    "suggestion": "Clarify notice period and mutual rights"
+  }
+]
+
+Text:
+${text}`
   );
 }
 
+// 🔹 Comprehensive analysis (JSON)
 export async function performComprehensiveAnalysis(text) {
-  return await withRetry(() =>
-    callGemini(`Perform a comprehensive legal analysis of this document. Include:
-1. Document type and purpose
-2. Parties involved
-3. Obligations & rights
-4. Deadlines
-5. Risks & ambiguities
-6. Recommendations
-7. Overall assessment\n\n${text}`)
+  return await safeJsonCall(
+    `Perform a comprehensive legal analysis of this document.
+Return ONLY valid JSON in this format:
+
+{
+  "documentType": "Employment Agreement",
+  "parties": ["Employer", "Employee"],
+  "obligations": "Employer provides salary, Employee provides services",
+  "deadlines": "30 days' notice for termination",
+  "risks": ["Ambiguous non-compete clause"],
+  "recommendations": ["Clarify scope of non-compete"],
+  "overallAssessment": "Generally balanced but with some ambiguities"
+}
+
+Text:
+${text}`
   );
 }
 
+// 🔹 Compare documents (plain text)
 export async function compareDocuments(text1, text2) {
   return await withRetry(() =>
-    callGemini(`Compare these two legal documents and highlight key differences and similarities:
-    
+    callGemini(`Compare these two legal documents and highlight key differences and similarities.
+Return plain text (bullet points are fine).
+
 Document 1:
 ${text1}
 

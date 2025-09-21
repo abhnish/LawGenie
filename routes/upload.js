@@ -2,10 +2,13 @@ import express from "express";
 import multer from "multer";
 import path from "path";
 import crypto from "crypto";
+import { successResponse, errorResponse } from "../utils/responseHelper.js";
 
 const router = express.Router();
 
-// Storage config
+// -------------------------------
+// Multer storage config
+// -------------------------------
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, "uploads/");
@@ -14,12 +17,13 @@ const storage = multer.diskStorage({
     const uniqueSuffix = crypto.randomBytes(8).toString("hex");
     const ext = path.extname(file.originalname);
     const baseName = path.basename(file.originalname, ext);
-    // ✅ save file as hash-originalname.ext
     cb(null, `${uniqueSuffix}-${baseName}${ext}`);
   },
 });
 
-// File filter
+// -------------------------------
+// File filter (PDF & DOCX only)
+// -------------------------------
 const fileFilter = (req, file, cb) => {
   if (
     file.mimetype === "application/pdf" ||
@@ -34,21 +38,27 @@ const fileFilter = (req, file, cb) => {
 
 const upload = multer({ storage, fileFilter });
 
+// -------------------------------
 // Upload route
+// -------------------------------
 router.post("/upload", upload.single("file"), (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ error: "No file uploaded or invalid type" });
-  }
+  try {
+    if (!req.file) {
+      return errorResponse(res, "No file uploaded or invalid type", 400);
+    }
 
-  res.json({
-    message: "File uploaded successfully ✅",
-    file_id: req.file.filename, // <-- now includes original name
-    originalname: req.file.originalname,
-    mimetype: req.file.mimetype,
-    size: req.file.size,
-    path: `/uploads/${req.file.filename}`,
-    status: "uploaded",
-  });
+    return successResponse(res, "File uploaded successfully ✅", {
+      file_id: req.file.filename,
+      originalname: req.file.originalname,
+      mimetype: req.file.mimetype,
+      size: req.file.size,
+      path: `/uploads/${req.file.filename}`,
+      status: "uploaded",
+    });
+  } catch (err) {
+    console.error("❌ Upload error:", err);
+    return errorResponse(res, "File upload failed");
+  }
 });
 
 export default router;
