@@ -20,7 +20,16 @@ import clausesRouter from "./routes/clauses.js";          // ✅ new
 import comprehensiveRouter from "./routes/comprehensive.js";  // ✅ new
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: [
+    "http://localhost:3000", // local React dev server
+    "https://lawgenie-frontend.web.app", // your Firebase Hosting URL
+    "https://pollenlike-tenorless-clemmie.ngrok-free.app" // your reserved ngrok domain
+  ],
+  methods: ["GET", "POST", "PUT", "DELETE"],
+  allowedHeaders: ["Content-Type", "Authorization"]
+}));
+
 app.use(express.json());
 
 // Use routes
