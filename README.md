@@ -68,8 +68,8 @@ Since the frontend is hosted remotely (e.g., Firebase/Netlify), we need a **publ
 
 2. In a new terminal, run ngrok:
 
-   ```bash
-   ngrok http 5000
+   ```bash/powershell
+   ngrok http --domain=pollenlike-tenorless-clemmie.ngrok-free.app 5000
    ```
 
 3. Ngrok will provide a public URL like:
